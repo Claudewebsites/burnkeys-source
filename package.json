@@ -1,0 +1,17 @@
+{
+  "name": "burnkeys",
+  "version": "0.2.8",
+  "description": "Rotate leaked API keys after a breach: find them, verify new keys work and old keys are dead, without ever printing a secret.",
+  "type": "module",
+  "bin": {
+    "burnkeys": "bin/burnkeys.js"
+  },
+  "scripts": {
+    "test": "node --test --test-timeout=30000 test/"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "Apache-2.0",
+  "private": true
+}

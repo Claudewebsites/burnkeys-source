@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Burnkeys</string>
+  <key>CFBundleDisplayName</key><string>Burnkeys</string>
+  <key>CFBundleIdentifier</key><string>com.burnkeys.app</string>
+  <key>CFBundleExecutable</key><string>Burnkeys</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.2.8</string>
+  <key>CFBundleVersion</key><string>10</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>CFBundleURLTypes</key>
+  <array><dict>
+    <key>CFBundleURLName</key><string>com.burnkeys.app.auth</string>
+    <key>CFBundleURLSchemes</key><array><string>burnkeys</string></array>
+  </dict></array>
+  <key>NSHumanReadableCopyright</key><string>© 2026 Burnkeys</string>
+  <key>NSDesktopFolderUsageDescription</key><string>Burnkeys looks for .env files in your projects to check your API keys. Keys never leave your Mac.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>Burnkeys looks for .env files in your projects to check your API keys. Keys never leave your Mac.</string>
+</dict>
+</plist>

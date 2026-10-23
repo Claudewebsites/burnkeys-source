@@ -1,0 +1,11 @@
+[
+  {
+    "id": "railway-2026-10-21",
+    "date": "2026-10-21",
+    "platform": "railway",
+    "platformName": "Railway",
+    "title": "Railway was breached",
+    "summary": "An intruder may have read environment variables stored on Railway. Railway asks every customer to replace all of them, starting with payment, database and AI provider keys.",
+    "url": "https://thehackernews.com/2026/10/railway-says-intruder-may-have-accessed.html"
+  }
+]

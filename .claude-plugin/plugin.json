@@ -1,0 +1,6 @@
+{
+  "name": "burnkeys",
+  "version": "0.1.0",
+  "description": "Blocks API keys pasted into chat, and warns at session start when a key in this project has stopped working. Keys never leave your machine except to their own provider.",
+  "license": "Apache-2.0"
+}

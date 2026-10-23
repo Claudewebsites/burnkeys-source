@@ -1,0 +1,14 @@
+{
+  "name": "burnkeys",
+  "owner": {
+    "name": "Burnkeys"
+  },
+  "plugins": [
+    {
+      "name": "burnkeys",
+      "source": "./",
+      "description": "Blocks API keys pasted into chat, and warns at session start when a key in this project has stopped working."
+    }
+  ],
+  "description": "Burnkeys: find leaked and dead API keys, and keep them out of your chats."
+}
