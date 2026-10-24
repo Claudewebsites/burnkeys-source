@@ -108,6 +108,18 @@ export async function startApp({
   }
   const newer = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
 
+  // Team: tell burnkeys.com this Mac's key statuses (metadata only, never a value), at most every 10 minutes.
+  let lastTeamSync = 0;
+  async function teamSync(o, force = false) {
+    if (!force && Date.now() - lastTeamSync < 10 * 60_000) return;
+    lastTeamSync = Date.now();
+    const t = await account.token().catch(() => null);
+    if (!t) return;
+    const leaked = new Set((o.leaks ?? []).map((l) => l.fp));
+    const keys = o.providers.filter((p) => !p.own).flatMap((p) => p.keys.map((k) => ({ provider: p.name, fp: k.fp, variables: k.names, projects: k.projects, status: k.status ?? 'unknown', leaked: leaked.has(k.fp) })));
+    await fetchImpl(`${siteUrl}/api/team`, { method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sync', keys }), signal: AbortSignal.timeout(10_000) }).catch(() => {});
+  }
+
   async function plansDoc() {
     if (plansCache && Date.now() - plansCache.at < 6 * 3600_000) return plansCache.doc;
     try {
@@ -433,6 +445,7 @@ export async function startApp({
     await checkAll({ force: true }).catch(() => {});
     if (Date.now() - ((await readJson(leaksPath, {})).at ?? 0) > 24 * 3600_000) await leakScan().catch(() => {});
     const o = await overview();
+    await teamSync(o, true).catch(() => {});
     const events = [];
     for (const p of o.providers) for (const k of p.keys) {
       if (k.status === 'invalid') events.push({ id: `dead:${k.fp}`, type: 'dead', provider: p.name, names: k.names, projects: k.projects, fp: k.fp });
@@ -680,7 +693,15 @@ export async function startApp({
       state.lastSeen = Date.now();
       const route = `${req.method} ${url.pathname}`;
       if (route === 'POST /api/ping') return send(res, 200, {});
-      if (route === 'GET /api/overview') return send(res, 200, await overview());
+      if (route === 'GET /api/overview') { const o = await overview(); teamSync(o).catch(() => {}); return send(res, 200, o); }
+      if (route === 'GET /api/team') {
+        const t = await account.token().catch(() => null);
+        if (!t) return send(res, 200, { signedIn: false });
+        try {
+          const r = await fetchImpl(`${siteUrl}/api/team`, { headers: { Authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(8000) });
+          return send(res, 200, r.ok ? { signedIn: true, ...(await r.json()) } : { signedIn: true, error: 'Couldn\'t load the team.' });
+        } catch { return send(res, 200, { signedIn: true, offline: true }); }
+      }
       if (route === 'POST /api/scan') { await scan(); await checkAll({}); await leakScan().catch(() => {}); return send(res, 200, await overview()); }
       if (route === 'POST /api/leaks') { await leakScan(); return send(res, 200, await overview()); }
       if (route === 'POST /api/alert-done' || route === 'POST /api/leak-ok' || route === 'POST /api/alert-close') {
@@ -936,6 +957,14 @@ export async function startApp({
         if (!f?.optional) return send(res, 409, { error: 'This part is required.' });
         job.skip = job.fieldIndex;
         return send(res, 200, { ok: true });
+      }
+      if (route === 'POST /api/hook-all') {
+        // Turn the git commit check on in every project that is a git repository.
+        const { inventories } = await collect();
+        let on = 0;
+        for (const { proj } of inventories) { const r = await installHook(proj.path).catch(() => null); if (r?.ok) on++; }
+        await log('hook-on', { project: `${on} projects` });
+        return send(res, 200, await overview());
       }
       if (route === 'POST /api/hook') {
         // Turn the git commit check on or off for one project.
