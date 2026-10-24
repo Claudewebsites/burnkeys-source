@@ -109,12 +109,19 @@ export async function startApp({
   const newer = (a, b) => { const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); } return false; };
 
   // Team: tell burnkeys.com this Mac's key statuses (metadata only, never a value), at most every 10 minutes.
-  let lastTeamSync = 0;
+  let lastTeamSync = 0, inTeam = null, inTeamAt = 0;
   async function teamSync(o, force = false) {
     if (!force && Date.now() - lastTeamSync < 10 * 60_000) return;
     lastTeamSync = Date.now();
     const t = await account.token().catch(() => null);
     if (!t) return;
+    // Only members of a team share anything: ask first (this request carries no key data), at most hourly.
+    if (inTeam === null || Date.now() - inTeamAt > 3600_000) {
+      const r = await fetchImpl(`${siteUrl}/api/team`, { headers: { Authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(8000) }).catch(() => null);
+      if (!r?.ok) return;
+      inTeam = !!(await r.json().catch(() => ({}))).id; inTeamAt = Date.now();
+    }
+    if (!inTeam) return;
     const leaked = new Set((o.leaks ?? []).map((l) => l.fp));
     const keys = o.providers.filter((p) => !p.own).flatMap((p) => p.keys.map((k) => ({ provider: p.name, fp: k.fp, variables: k.names, projects: k.projects, status: k.status ?? 'unknown', leaked: leaked.has(k.fp) })));
     await fetchImpl(`${siteUrl}/api/team`, { method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sync', keys }), signal: AbortSignal.timeout(10_000) }).catch(() => {});
@@ -322,7 +329,7 @@ export async function startApp({
     return {
       scanned: Array.isArray(cfg.projects), scannedAt: cfg.scannedAt ?? null, roots: cfg.roots ?? [], denied: cfg.denied ?? [], checkEveryMin: cfg.checkEveryMin ?? 360,
       projects, providers, leaks, alerts, platforms, allPlatforms: PLATFORMS.map(({ id, name }) => ({ id, name })), leaksAt: leakData.at ?? null,
-      version: myVersion, update: await latestVersion().then((v) => (v?.app && newer(v.app, myVersion) ? { version: v.app, url: v.url ?? `${siteUrl}/download/Burnkeys.dmg`, notes: v.notes ?? '' } : null)).catch(() => null),
+      version: myVersion, update: await latestVersion().then((v) => (v?.app && newer(v.app, myVersion) ? { version: v.app, url: /^https:\/\/burnkeys\.com\//.test(v.url ?? '') ? v.url : `${siteUrl}/download/Burnkeys.dmg`, notes: v.notes ?? '' } : null)).catch(() => null),
       plan: pro ? 'pro' : 'free', plans: await plansDoc(), limits, lockedProviders, background: !!cfg.background,
       catalog: [...CATALOG, ...custom].filter((c) => !used.has(c.id)).map((c) => ({ id: c.id, name: c.name, icon: c.icon ?? null })),
       icons: Object.fromEntries(custom.filter((c) => c.icon).map((c) => [c.id, c.icon])),
@@ -582,7 +589,7 @@ export async function startApp({
   // Step 2: write the key into the chosen projects (and Vercel if asked).
   async function apply({ fp, projects: paths, variable, vercel, hosts = [] }) {
     if (hosts.includes('vercel')) vercel = true;
-    const otherHosts = hosts.filter((h) => HOSTS[h]);
+    const otherHosts = [...new Set(hosts)].filter((h) => Object.hasOwn(HOSTS, h));
     const job = state.job;
     const multi = job && job.fp === fp && job.writes;
     if (multi) variable = job.writes[0].variable;
@@ -643,6 +650,7 @@ export async function startApp({
         if (!link) msg = `not linked to ${host.name}`;
         else {
           const token = process.env[host.tokenNames[0]]
+            || inventories.find((x) => x.proj.path === proj.path)?.inv.secrets.find((e) => host.tokenNames.some((n) => e.names.has(n)))?.value
             || inventories.flatMap(({ inv }) => inv.secrets).find((e) => host.tokenNames.some((n) => e.names.has(n)))?.value
             || await (async () => { const v = (await vault.list()).find((i) => i.providerId === host.provider); return v ? vault.get(v.fp) : null; })();
           if (!token) msg = `no ${host.name} token: add one in Burnkeys (Providers, ${host.name})`;
@@ -699,7 +707,9 @@ export async function startApp({
         if (!t) return send(res, 200, { signedIn: false });
         try {
           const r = await fetchImpl(`${siteUrl}/api/team`, { headers: { Authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(8000) });
-          return send(res, 200, r.ok ? { signedIn: true, ...(await r.json()) } : { signedIn: true, error: 'Couldn\'t load the team.' });
+          const tj = r.ok ? await r.json() : null;
+          if (tj) { inTeam = !!tj.id; inTeamAt = Date.now(); }
+          return send(res, 200, tj ? { signedIn: true, ...tj } : { signedIn: true, error: 'Couldn\'t load the team.' });
         } catch { return send(res, 200, { signedIn: true, offline: true }); }
       }
       if (route === 'POST /api/scan') { await scan(); await checkAll({}); await leakScan().catch(() => {}); return send(res, 200, await overview()); }

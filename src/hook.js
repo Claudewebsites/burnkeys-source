@@ -21,21 +21,25 @@ export async function hookInstalled(repo) {
 }
 
 export async function installHook(repo) {
+  // Projects that keep hooks in a tracked folder (husky, lefthook) would commit our script: leave them alone.
+  const custom = (await git(repo, ['config', '--get', 'core.hooksPath']))?.trim();
+  if (custom) return { ok: false, error: `This project manages its git hooks in ${custom} (husky or similar). Add "burnkeys hook run" to its pre-commit hook instead.` };
   const p = await hookPath(repo);
   if (!p) return { ok: false, error: 'Not a git repository.' };
   const existing = await readFile(p, 'utf8').catch(() => null);
   if (existing?.includes(MARK)) return { ok: true, already: true };
   if (existing != null) await rename(p, p + '.local'); // keep the project's own hook and run it after ours
+  const q = (x) => `'${String(x).replace(/'/g, `'\\''`)}'`; // shell single-quoting
   const node = process.execPath, cli = fileURLToPath(new URL('../bin/burnkeys.js', import.meta.url));
   const script = `#!/bin/sh
 ${MARK}. Skip once with: git commit --no-verify
-# Exit code 1 means "a key was found"; anything else (an old Burnkeys, no Burnkeys) never blocks.
-if [ -x "${node}" ] && [ -f "${cli}" ]; then "${node}" "${cli}" hook run
+# Exit code 3 means "a key was found"; anything else (an error, an old Burnkeys, no Burnkeys) never blocks.
+if [ -x ${q(node)} ] && [ -f ${q(cli)} ]; then ${q(node)} ${q(cli)} hook run
 elif [ -x /Applications/Burnkeys.app/Contents/Resources/node/bin/node ]; then /Applications/Burnkeys.app/Contents/Resources/node/bin/node /Applications/Burnkeys.app/Contents/Resources/engine/bin/burnkeys.js hook run
 elif command -v burnkeys >/dev/null 2>&1; then burnkeys hook run
 else true
 fi
-[ $? -eq 1 ] && exit 1
+[ $? -eq 3 ] && exit 1
 if [ -x "$0.local" ]; then exec "$0.local" "$@"; fi
 exit 0
 `;
@@ -56,12 +60,12 @@ export async function uninstallHook(repo) {
 // Check what is staged right now. Returns [{ file, provider, fp, why }].
 export async function checkStaged(repo = process.cwd()) {
   const problems = [];
-  const files = ((await git(repo, ['diff', '--cached', '--name-only', '--diff-filter=ACM'])) ?? '').split('\n').filter(Boolean);
+  const files = ((await git(repo, ['diff', '--cached', '--name-only', '--diff-filter=ACMR'])) ?? '').split('\n').filter(Boolean);
   for (const f of files) {
     const name = basename(f);
     if (/^\.env(\..+)?$/.test(name) && !EXAMPLE.test(name)) problems.push({ file: f, provider: 'env file', fp: '', why: 'an .env file is being committed' });
   }
-  const diff = (await git(repo, ['diff', '--cached', '-U0', '--no-color', '--diff-filter=ACM'])) ?? '';
+  const diff = (await git(repo, ['diff', '--cached', '-U0', '--no-color', '--diff-filter=ACMR'])) ?? '';
   let file = null, added = [];
   const flush = () => {
     if (file && added.length && !EXAMPLE.test(basename(file))) {

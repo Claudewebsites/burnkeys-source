@@ -127,12 +127,13 @@ switch (cmd) {
     if (sub === 'install') { const r = await installHook(repo); process.stdout.write(r.ok ? `Burnkeys now blocks commits with API keys in ${repo}.\n` : `${r.error}\n`); code = r.ok ? 0 : 1; break; }
     if (sub === 'uninstall') { await uninstallHook(repo); process.stdout.write('Removed the Burnkeys commit check.\n'); code = 0; break; }
     if (sub === 'run') {
-      const problems = await checkStaged(process.cwd());
+      let problems = [];
+      try { problems = await checkStaged(process.cwd()); } catch { code = 0; break; } // never block a commit on our own error
       if (!problems.length) { code = 0; break; }
       printErr('\nBurnkeys stopped this commit:');
       for (const p of problems) printErr(`  ${p.file}: ${p.provider}${p.fp ? ' ' + p.fp : ''} (${p.why})`);
       printErr('\nMove the key to a .env file that git ignores, or skip this check once with: git commit --no-verify\n');
-      code = 1; break;
+      code = 3; break; // 3 = key found (the hook script blocks only on 3)
     }
     printErr('Usage: burnkeys hook install [repo] | uninstall [repo] | run');
     code = 2; break;

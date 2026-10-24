@@ -81,7 +81,9 @@ async function flySet({ link, token, names, value, fetchImpl }) {
 async function renderLink(dir) {
   try {
     const y = await readFile(join(dir, 'render.yaml'), 'utf8');
-    const names = [...y.matchAll(/^\s*-?\s*name:\s*["']?([\w.-]+)["']?\s*$/gm)].map((m) => m[1]);
+    // Only service names: the top-level "services:" list (not databases or fromService references).
+    const block = (y.split(/^services:\s*$/m)[1] ?? '').split(/^\S/m)[0];
+    const names = [...block.matchAll(/^ {2}- [\s\S]*?(?=^ {2}- |$(?![\s\S]))/gm)].map((m) => (m[0].match(/^\s*-?\s*name:\s*["']?([\w.-]+)["']?\s*$/m) ?? [])[1]).filter(Boolean);
     return names.length ? names.map((name) => ({ name })) : null;
   } catch { return null; }
 }
