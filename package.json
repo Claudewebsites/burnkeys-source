@@ -1,6 +1,6 @@
 {
   "name": "burnkeys",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Rotate leaked API keys after a breach: find them, verify new keys work and old keys are dead, without ever printing a secret.",
   "type": "module",
   "bin": {

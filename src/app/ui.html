@@ -563,13 +563,25 @@ function renderModal() {
     el.innerHTML = `<div class="overlay"><div class="modal" role="dialog" aria-modal="true">${body}</div></div>`;
     return;
   }
+  if (modal.kind === 'share') {
+    const m = modal;
+    body = `<h2>Share it</h2>
+      <div style="margin:6px 0 14px;padding:22px;border-radius:16px;background:linear-gradient(140deg,#1B1511,#2A1A10);border:1px solid #3A2C22;color:#EDE6DC">
+        <div style="font-size:13px;color:#FF8A4C;font-weight:700;letter-spacing:.02em">burnkeys_</div>
+        <div style="font-size:26px;font-weight:700;line-height:1.2;margin:10px 0 6px">Replaced ${m.keys} API key${m.keys === 1 ? '' : 's'} in ${m.mins} min.</div>
+        <div style="color:#A0958B">0 keys printed. Every project updated.</div></div>
+      <p class="muted" style="font-size:13px">${m.ref ? 'Your invite link is included: a friend who subscribes gets a month free, and so do you.' : 'Sign in under Account to add your invite link: a friend who subscribes gets a month free, and so do you.'}</p>
+      <div class="row"><button data-act="close">Close</button><button data-act="share-copy">Copy text</button><button class="primary" data-act="open-url" data-url="https://x.com/intent/post?text=${encodeURIComponent(m.text)}">Post on X</button></div>`;
+    el.innerHTML = `<div class="overlay"><div class="modal" role="dialog" aria-modal="true">${body}</div></div>`;
+    return;
+  }
   if (modal.kind === 'batchdone') {
     const b = batch;
     body = `<h2>${esc(b.label)}: done</h2>
       <p class="big"><span class="ok">✓</span> ${plural(b.replaced.length, 'key')} replaced${b.skipped.length ? `, ${b.skipped.length} skipped` : ''}.</p>
       ${b.replaced.length ? `<p>Last step: revoke the old keys, so nobody can use them. Burnkeys checks each one after you delete it.</p>
       <div class="list">${b.replaced.map((x) => `<div class="item"><div><b>${esc(x.name)}</b><span class="fp">${esc(x.fp)}</span></div><span></span><span class="actions"><button data-act="revoke" data-provider="${esc(x.providerId)}" data-fp="${esc(x.fp)}">Revoke</button></span></div>`).join('')}</div>` : ''}
-      <div class="row">${b.replaced.length ? `<button data-act="share-card">Share</button>` : ''}<button class="primary" data-act="batch-close">Close</button></div>`;
+      <div class="row">${b.replaced.length ? `<button class="left link" data-act="share-card" data-keys="${b.replaced.length}" data-since="${b.startedAt}">Share ↗</button>` : ''}<button class="primary" data-act="batch-close">Close</button></div>`;
     el.innerHTML = `<div class="overlay"><div class="modal" role="dialog" aria-modal="true">${body}</div></div>`;
     return;
   }
@@ -639,7 +651,7 @@ function renderModal() {
         <div class="results">${esc(lines || 'No projects selected.')}</div>
         ${modal.replaceFp ? `<p style="margin-top:12px">Last step: revoke the old key on ${name}'s site, so nobody can use it. Burnkeys then checks that it's dead.</p>` : ''}
         ${batch ? (() => { const nx = batch.items[batch.i + 1]; return `<div class="row"><button data-act="batch-stop">Stop here</button><button class="primary" data-act="batch-next">${nx ? `Next: ${esc(nx.name)} (${batch.i + 2} of ${batch.items.length})` : 'Finish'}</button></div>`; })()
-        : `<div class="row">${modal.replaceFp ? `<button data-act="close">Later</button><button class="primary" data-act="retire-old" data-provider="${esc(j.providerId)}" data-fp="${esc(modal.replaceFp)}">Revoke the old key</button>` : '<button class="primary" data-act="close">Close</button>'}</div>`}`;
+        : `<div class="row">${modal.replaceFp ? `<button class="left link" data-act="share-card" data-keys="1" data-projects="${(j.results || []).length}" data-since="${modal.startedAt || ''}">Share ↗</button><button data-act="close">Later</button><button class="primary" data-act="retire-old" data-provider="${esc(j.providerId)}" data-fp="${esc(modal.replaceFp)}">Revoke the old key</button>` : '<button class="primary" data-act="close">Close</button>'}</div>`}`;
     }
   }
   el.innerHTML = `<div class="overlay"><div class="modal" role="dialog" aria-modal="true">${body}</div></div>`;
@@ -687,7 +699,7 @@ let batch = null;
 function startBatch(items, label) {
   const list = items.filter((x) => x.inCatalog !== false && !x.own);
   if (!list.length) return;
-  batch = { label, items: list, i: 0, replaced: [], skipped: [] };
+  batch = { label, items: list, i: 0, replaced: [], skipped: [], startedAt: Date.now() };
   startAdd(list[0].providerId, list[0].fp);
 }
 function batchNext(skip) {
@@ -700,7 +712,7 @@ function batchNext(skip) {
 }
 async function startAdd(providerId, replaceFp) {
   const p = data.providers.find((x) => x.id === providerId) || data.catalog.find((x) => x.id === providerId);
-  modal = { kind: 'job', providerName: p?.name, replaceFp: replaceFp || null, job: null };
+  modal = { kind: 'job', providerName: p?.name, replaceFp: replaceFp || null, job: null, startedAt: Date.now() };
   renderModal();
   try { modal.job = await api('add-key', { providerId, ...(replaceFp ? { replaceFp } : {}) }); }
   catch (e) { modal.job = { step: 'failed', message: e.message, providerId }; }
@@ -821,6 +833,16 @@ document.addEventListener('click', async (e) => {
     modal.step = r.status === 'valid' ? 'still-alive' : r.status === 'invalid' ? 'dead' : 'unknown'; renderModal();
   }
   if (act === 'hook') { try { data = await api('hook', { path: t.dataset.path, on: t.checked }); } catch (err) { t.checked = !t.checked; alert(err.message); } render(); return; }
+  if (act === 'share-card') {
+    const keys = Number(t.dataset.keys) || 1, mins = Math.max(1, Math.round((Date.now() - Number(t.dataset.since || Date.now())) / 60000));
+    const acct = accountInfo?.signedIn ? accountInfo : await api('account').catch(() => null);
+    const link = acct?.refCode ? `https://burnkeys.com/?ref=${acct.refCode}` : 'https://burnkeys.com';
+    const text = `Just replaced ${keys} API key${keys === 1 ? '' : 's'} in ${mins} min with @burnkeys_. Every project and host updated, not one key printed. ${link}`;
+    batch = null;
+    modal = { kind: 'share', keys, mins, ref: !!acct?.refCode, text };
+    renderModal(); return;
+  }
+  if (act === 'share-copy') { try { await navigator.clipboard.writeText(modal.text); t.textContent = 'Copied'; } catch { prompt('Copy this text:', modal.text); } return; }
   if (act === 'batch-next') { batchNext(false); return; }
   if (act === 'batch-skip') { batchNext(true); return; }
   if (act === 'batch-stop') { batch = null; modal = null; renderModal(); await refresh(); return; }

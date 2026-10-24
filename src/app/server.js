@@ -764,7 +764,7 @@ export async function startApp({
           const r = await fetchImpl(`${siteUrl}/api/me`, { headers: { Authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(8000) });
           if (r.status === 401) { await account.clear(); return send(res, 200, { signedIn: false }); }
           const me = await r.json();
-          return send(res, 200, { signedIn: true, email: me.email, plan: me.plan });
+          return send(res, 200, { signedIn: true, email: me.email, plan: me.plan, ...(me.refCode && { refCode: me.refCode }) });
         } catch { return send(res, 200, { signedIn: true, offline: true }); }
       }
       if (route === 'POST /api/account/start') {

@@ -9,7 +9,7 @@ import { scanGitLeaks } from './leaks.js';
 // Every tool answers with providers, variable names, projects, fingerprints and statuses.
 // Key values never appear in any answer: they stay in this process, on this Mac.
 
-const VERSION = '0.2.8';
+const VERSION = '0.2.9';
 const dataDir = join(homedir(), '.burnkeys');
 const readJson = async (p, d) => { try { return JSON.parse(await readFile(p, 'utf8')); } catch { return d; } };
 
