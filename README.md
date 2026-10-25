@@ -2,7 +2,7 @@
 
 Find every API key in your projects, check each one with its provider, and replace it everywhere it's used. Burnkeys never prints a secret: keys appear as short fingerprints (`fp:1a2b3c4d`).
 
-- **Mac app:** [burnkeys.com](https://burnkeys.com) (Apple silicon, macOS 12 or later)
+- **Mac app:** [burnkeys.com](https://burnkeys.com) (Apple silicon or Intel, macOS 13.5 or later)
 - **Terminal:** `brew install claudewebsites/burnkeys/burnkeys`
 - **Claude Code plugin:** install it from the app (Settings, Claude Code)
 

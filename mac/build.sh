@@ -5,21 +5,31 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 NODE_VERSION="v26.12.1"
-NODE_TGZ="build/vendor/node-$NODE_VERSION-darwin-arm64.tar.gz"
+# Universal app: runs natively on Apple silicon and Intel Macs.
+NODE_ARM="build/vendor/node-$NODE_VERSION-darwin-arm64.tar.gz"
+NODE_X64="build/vendor/node-$NODE_VERSION-darwin-x64.tar.gz"
 APP="build/Burnkeys.app"
 
-[ -f "$NODE_TGZ" ] || { echo "Missing $NODE_TGZ (official Node.js download)"; exit 1; }
+for f in "$NODE_ARM" "$NODE_X64"; do [ -f "$f" ] || { echo "Missing $f (official Node.js download)"; exit 1; }; done
+# Check both downloads against the checksums nodejs.org publishes for this version.
+SUMS="build/vendor/SHASUMS256-$NODE_VERSION.txt"
+[ -f "$SUMS" ] || curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/SHASUMS256.txt" -o "$SUMS"
+(cd build/vendor && grep -E " node-$NODE_VERSION-darwin-(arm64|x64)\.tar\.gz$" "$(basename "$SUMS")" | shasum -a 256 -c - >/dev/null) || { echo "Node download doesn't match nodejs.org's checksum"; exit 1; }
 
 rm -rf "${APP:?}"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/node/bin" "$APP/Contents/Resources/engine"
 
 # Native window
-swiftc -O -target arm64-apple-macos12 mac/main.swift -o "$APP/Contents/MacOS/Burnkeys" -framework Cocoa -framework WebKit
+swiftc -O -target arm64-apple-macos13.5 mac/main.swift -o build/Burnkeys-arm64 -framework Cocoa -framework WebKit
+swiftc -O -target x86_64-apple-macos13.5 mac/main.swift -o build/Burnkeys-x64 -framework Cocoa -framework WebKit
+lipo -create build/Burnkeys-arm64 build/Burnkeys-x64 -output "$APP/Contents/MacOS/Burnkeys"
+rm -f build/Burnkeys-arm64 build/Burnkeys-x64
 cp mac/Info.plist "$APP/Contents/Info.plist"
 
 # Official Node.js runtime (only the binary and its license)
-tar -xzf "$NODE_TGZ" -C build/vendor
-cp "build/vendor/node-$NODE_VERSION-darwin-arm64/bin/node" "$APP/Contents/Resources/node/bin/node"
+tar -xzf "$NODE_ARM" -C build/vendor
+tar -xzf "$NODE_X64" -C build/vendor
+lipo -create "build/vendor/node-$NODE_VERSION-darwin-arm64/bin/node" "build/vendor/node-$NODE_VERSION-darwin-x64/bin/node" -output "$APP/Contents/Resources/node/bin/node"
 cp "build/vendor/node-$NODE_VERSION-darwin-arm64/LICENSE" "$APP/Contents/Resources/node/LICENSE"
 
 # Burnkeys engine (no tests, no docs)
