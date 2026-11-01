@@ -1,0 +1,41 @@
+# Secrets: never commit these (Burnkeys eats its own dog food)
+.env
+.env.*
+!.env.example
+*.p8
+*.pem
+*.key
+*.p12
+*.pfx
+*service-account*.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
+credentials.json
+secrets.json
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Internal notes (plan, marketing drafts) and local tool config: never published
+internal/
+.claude/
+
+# Local launcher (machine-specific)
+Burnkeys.app/
+
+# App build output and downloaded runtimes
+build/
+
+# Built installer (uploaded to the site, not stored in git)
+site/download/
+
+# Vercel link (local)
+.vercel/
+build-notarize.log
+Screenshot*.png

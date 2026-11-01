@@ -34,8 +34,11 @@ cp "build/vendor/node-$NODE_VERSION-darwin-arm64/LICENSE" "$APP/Contents/Resourc
 
 # Burnkeys engine (no tests, no docs)
 # Minified (hard to read) copy of the engine; see internal/minify.mjs
+# pro/ is the closed Pro code. The public source does not have it; the shipped app does.
 rm -rf build/engine-min
-node internal/minify.mjs build/engine-min bin src package.json .claude-plugin hooks skills >/dev/null
+PARTS=(bin src package.json .claude-plugin hooks skills)
+if [ -d pro ]; then PARTS+=(pro); fi
+node internal/minify.mjs build/engine-min "${PARTS[@]}" >/dev/null
 cp -R build/engine-min/. "$APP/Contents/Resources/engine/"
 
 # Icon

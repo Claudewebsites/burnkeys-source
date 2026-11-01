@@ -17,6 +17,7 @@ button{font:inherit;color:inherit;background:var(--panel);border:1px solid var(-
 button:hover{border-color:var(--dim)}
 button.primary{background:var(--ember);border-color:var(--ember);color:#160A03;font-weight:600}
 button.primary:hover{filter:brightness(1.06)}
+#updateBtn{border-radius:999px;padding:6px 14px;font-weight:700}
 button.link{background:none;border:0;padding:0;color:var(--dim)}
 button.link:hover{color:var(--text)}
 button:disabled{opacity:.45;cursor:default}
@@ -104,6 +105,25 @@ h1{font:600 20px var(--sans);margin:0}
 .empty{max-width:520px;margin:60px auto;text-align:center}
 .empty h1{font-size:24px;margin-bottom:10px}
 .empty p{color:var(--dim);margin:0 0 20px}
+html.gated{background:#0F0C0A}
+html.gated .app{grid-template-rows:1fr;background:#0F0C0A}
+html.gated header,html.gated aside{display:none!important}
+html.gated .body{grid-template-columns:minmax(0,1fr)}
+html.gated main{padding:0;overflow:hidden;background:#0F0C0A}
+.gate{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 28px 36px;background:
+  radial-gradient(ellipse 70% 50% at 50% 28%, #17120F 0%, #0F0C0A 68%);
+  color:#EDE6DC;text-align:center}
+.gate-mark{display:flex;flex-direction:column;align-items:center;gap:14px;margin-bottom:36px}
+.gate-mark svg{width:56px;height:56px}
+.gate-word{font:700 22px/1 var(--sans);letter-spacing:-.6px;color:#EDE6DC}
+.gate-word i{font-style:normal;color:#FF6A2B}
+.gate h1{font:600 34px/1.15 var(--sans);letter-spacing:-.8px;margin:0 0 10px;color:#EDE6DC;max-width:22ch}
+.gate .lede{margin:0 0 28px;max-width:34ch;color:#A0958B;font:400 15px/1.5 var(--sans)}
+.gate .cta{width:min(340px,100%);padding:12px 18px;border-radius:10px;font:600 15px var(--sans);background:#FF6A2B;border-color:#FF6A2B;color:#160A03}
+.gate .cta:hover{filter:brightness(1.06)}
+.gate .cta:disabled{opacity:1;filter:none;cursor:default}
+.gate .wait{margin:16px 0 0;max-width:34ch;color:#A0958B;font:400 13.5px/1.45 var(--sans)}
+.gate .legal{margin:40px 0 0;max-width:36ch;color:#6F675F;font:400 12px/1.5 var(--sans)}
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px}
 .modal{background:var(--panel);border:1px solid var(--edge);border-radius:14px;width:min(560px,100%);max-height:calc(100% - 40px);overflow:auto;padding:20px}
 .modal h2{margin:0 0 8px;font:600 17px var(--sans)}
@@ -131,6 +151,7 @@ h1{font:600 20px var(--sans);margin:0}
     <span class="muted" id="checked"></span>
     <button id="refreshBtn" title="Refresh: look for new projects and check every key again" aria-label="Refresh" hidden>↻</button>
     <button id="themeBtn" title="Theme: dark" aria-label="Switch theme">◐</button>
+    <button class="primary" id="updateBtn" hidden>Update</button>
     <button class="primary" id="checkBtn" hidden>Check keys</button>
   </header>
   <div class="body">
@@ -197,7 +218,7 @@ let dismissed = new Set();
 try { dismissed = new Set(JSON.parse(localStorage.getItem('bk-dismissed') || '[]')); } catch {}
 const saveDismissed = () => { try { localStorage.setItem('bk-dismissed', JSON.stringify([...dismissed])); } catch {} };
 const closeX = (id) => `<button class="x" data-act="dismiss" data-id="${esc(id)}" title="Close" aria-label="Close">✕</button>`;
-let data = null, view = 'overview', detail = null, modal = null, poll = null, busy = false, activityItems = null;
+let data = null, view = 'overview', detail = null, modal = null, poll = null, busy = false, activityItems = null, accountInfo = null;
 
 // ---------- rendering ----------
 function statusOf(k) {
@@ -220,11 +241,55 @@ function providerLine(p) {
   return parts.join(' <span class="muted">·</span> ');
 }
 
+function hideAppChrome() {
+  document.getElementById('nav').hidden = true;
+  document.getElementById('checkBtn').hidden = true;
+  document.getElementById('refreshBtn').hidden = true;
+  document.getElementById('updateBtn').hidden = true;
+  document.getElementById('checked').textContent = '';
+}
+
+function showUpdateBtn() {
+  const u = data?.update;
+  const btn = document.getElementById('updateBtn');
+  btn.hidden = !u;
+  if (u) {
+    btn.title = `Burnkeys ${u.version} is available.${u.notes ? ' ' + u.notes : ''}`;
+    btn.dataset.url = u.url;
+  }
+}
+
+function renderGate() {
+  hideAppChrome();
+  document.documentElement.classList.add('gated');
+  const a = accountInfo || {};
+  document.getElementById('main').innerHTML = `<div class="gate">
+    <div class="gate-mark">
+      <svg viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="gfl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFC23D"/><stop offset="1" stop-color="#FF3D17"/></linearGradient><mask id="gkh"><rect width="512" height="512" fill="#fff"/><circle cx="256" cy="322" r="40" fill="#000"/><path d="M240 340H272L286 410H226Z" fill="#000"/></mask></defs><path fill="url(#gfl)" mask="url(#gkh)" d="M256 70C300 150 392 205 392 318C392 400 330 452 256 452C182 452 120 400 120 320C120 252 164 214 190 156C201 203 218 226 240 233C228 178 232 124 256 70Z"/></svg>
+      <div class="gate-word">burnkeys<i>_</i></div>
+    </div>
+    <h1>${a.waiting ? 'Finish signing in' : 'Sign in to continue'}</h1>
+    <p class="lede">${a.waiting ? 'A browser window is open. Come back here when you are done.' : 'Burnkeys looks at your projects after you have an account.'}</p>
+    <button class="primary cta" data-act="signin"${a.waiting ? ' disabled' : ''}>${a.waiting ? '<span class="spin"></span>Waiting…' : 'Continue in browser'}</button>
+    ${a.waiting ? '<p class="wait">You will come right back to this app.</p>' : ''}
+    <p class="legal">Keys stay on this Mac. The account holds your email and plan.</p>
+  </div>`;
+}
+
+async function enterApp() {
+  await refresh();
+  if (data?.scanned) { data = await api('check', {}); render(); }
+}
+
 function render() {
   const main = document.getElementById('main');
+  if (!accountInfo?.signedIn) { renderGate(); return; }
+  document.documentElement.classList.remove('gated');
+  if (!data) { hideAppChrome(); main.innerHTML = '<div class="empty"><p>Loading…</p></div>'; return; }
   document.getElementById('nav').hidden = !data.scanned;
   document.getElementById('checkBtn').hidden = !data.scanned;
   document.getElementById('refreshBtn').hidden = !data.scanned;
+  showUpdateBtn();
   if (!data.scanned) {
     main.innerHTML = `<div class="empty"><h1>Find your projects</h1>
       <p>To check your API keys, Burnkeys needs to read your projects. It looks in Desktop, Documents, Developer and your other code folders. macOS will ask you to allow access to these folders. Click Allow. Nothing leaves your Mac.</p>
@@ -250,9 +315,13 @@ function render() {
     ? (dismissed.has('many:' + dead.map((d) => d.k.fp).join()) ? '' : `<div class="banner"><b>${dead.length} keys stopped working.</b> Things that use them are probably broken. <button class="link" data-view-go="overview" style="color:inherit;text-decoration:underline">See what to fix</button>${closeX('many:' + dead.map((d) => d.k.fp).join())}</div>`)
     : dead.map(({ p, k }) => `<div class="banner"><b>Your ${esc(p.name)} key ${k.projects.length ? `in ${esc(k.projects.join(', '))}` : 'saved in your Keychain'} stopped working.</b> ${k.projects.length ? 'Anything that uses it is probably broken.' : 'No project uses it, so nothing is broken.'} <button class="link" data-act="replace" data-provider="${esc(p.id)}" data-fp="${esc(k.fp)}" style="color:inherit;text-decoration:underline">Replace it</button>${closeX(k.fp)}</div>`).join('');
 
-  const breach = (data.alerts || []).filter((a) => !a.done && !a.closed && a.affected.length && !dismissed.has('alert:' + a.id));
   if (data.update && !dismissed.has('update:' + data.update.version)) banner += `<div class="banner" style="border-color:var(--edge);background:var(--panel);color:var(--text)"><b>Burnkeys ${esc(data.update.version)} is available.</b> ${esc(data.update.notes)} <button class="link" data-act="open-url" data-url="${esc(data.update.url)}" style="color:inherit;text-decoration:underline">Download</button>${closeX('update:' + data.update.version)}</div>`;
-  banner = breach.map((a) => `<div class="banner"><b>${esc(a.title)} (${esc(fmtDate(a.date))}).</b> ${plural(a.affected.length, 'key')} in ${esc(a.projects.join(', '))} ${a.affected.length === 1 ? 'was' : 'were'} stored there. Replace ${a.affected.length === 1 ? 'it' : 'them'}. <button class="link" data-view-go="alerts" style="color:inherit;text-decoration:underline">See which</button>${closeX('alert:' + a.id)}</div>`).join('') + banner;
+  const ext = data.extensions || { installed: [], traces: [] };
+  if ((ext.installed?.length || ext.traces?.length) && !dismissed.has('ext')) {
+    const ver = [...new Set((ext.installed || []).map((x) => x.version))].join(' and ');
+    const title = ver ? `Malicious Claude Code extension ${ver} is on this Mac.` : 'A trace of the malicious Claude Code extension is still on this Mac.';
+    banner = `<div class="banner"><b>${esc(title)}</b> Uninstall it, then replace the keys it could have read. <button class="link" data-act="open-url" data-url="${esc(ext.notice || 'https://cursor.com/blog/claude-code-extension-security-notice')}" style="color:inherit;text-decoration:underline">What to remove</button>${closeX('ext')}</div>` + banner;
+  }
   if (!data.projects.length && view !== 'settings') {
     const blocked = (data.denied || []).map((d) => d.replace(/^\/Users\/[^/]+/, '~'));
     main.innerHTML = `<div class="empty"><h1>${blocked.length ? 'Burnkeys needs to see your projects' : 'No projects found yet'}</h1>
@@ -325,7 +394,6 @@ function overviewMore(keys, dead, working) {
   const every = data.checkEveryMin >= 60 ? `${Math.round(data.checkEveryMin / 60)} h` : `${data.checkEveryMin} min`;
   const age = (k) => k.history?.addedAt || k.firstSeen || 0;
   const old = keys.filter(({ k }) => age(k) && Date.now() - age(k) > 90 * 864e5).sort((a, b) => age(a.k) - age(b.k)).slice(0, 5);
-  const breaches = (data.alerts || []).filter((a) => !a.closed).slice(0, 3);
   if (!activityItems) api('activity').then((r) => { activityItems = r.items; if (view === 'overview') render(); }).catch(() => { activityItems = []; });
   const recent = (activityItems || []).filter((a) => a.type !== 'scan').slice(0, 4);
   return `<div class="section"><h2>Protection</h2><div class="ptiles">
@@ -338,7 +406,6 @@ function overviewMore(keys, dead, working) {
       <span class="ok" style="width:${pct(working.length)}%"></span><span class="bad" style="width:${pct(dead.length)}%"></span><span class="unk" style="width:${pct(unknown)}%"></span></div>
       <div class="muted hlegend"><span><i class="dotok"></i>${working.length} working</span><span><i class="dotbad"></i>${dead.length} dead</span><span><i class="dotunk"></i>${unknown} can't be checked automatically</span></div></div>` : ''}
     ${old.length ? `<div class="section"><h2>Oldest keys</h2><p class="muted" style="margin-top:-6px">In use for more than 90 days. Replacing keys now and then limits the damage of a leak you never heard about.</p><div class="list">${old.map(({ p, k }) => `<div class="item"><div><b>${esc(p.name)}</b> <span class="muted">${esc(k.names.join(', '))}</span><span class="fp">${esc(k.fp)}</span><div class="meta">${Math.round((Date.now() - age(k)) / 864e5)} days · ${esc(k.projects.join(', ') || 'Keychain')}</div></div><span></span><span class="actions">${p.inCatalog ? `<button data-act="replace" data-provider="${esc(p.id)}" data-fp="${esc(k.fp)}">Replace</button>` : ''}</span></div>`).join('')}</div></div>` : ''}
-    ${breaches.length ? `<div class="section"><h2>Latest breaches</h2><div class="list">${breaches.map((a) => `<div class="item row-link" data-view-go="alerts"><div><b>${esc(a.title)}</b><div class="meta">${esc(fmtDate(a.date))}${a.projects.length ? ` · <span class="bad">touches ${esc(a.projects.join(', '))}</span>` : ' · not in your projects'}</div></div><span></span><span></span></div>`).join('')}</div></div>` : ''}
     ${recent.length ? `<div class="section"><h2>Recent activity</h2><div class="list">${recent.map((a) => `<div class="item"><div>${esc(actText(a))}<div class="meta">${esc(new Date(a.at).toLocaleString())}</div></div><span></span><span></span></div>`).join('')}</div></div>` : ''}`;
 }
 function renderOverview(main, banner) {
@@ -348,12 +415,15 @@ function renderOverview(main, banner) {
   const shared = allShared.filter(({ k }) => !k.sharedOk);
   const unchecked = keys.filter(({ p, k }) => !k.status && !p.canCheck);
   const working = keys.filter(({ k }) => k.status === 'valid');
+  const extHit = data.extensions || { installed: [], traces: [] };
+  const extTodo = (extHit.installed?.length || extHit.traces?.length) ? `<div class="todo"><span class="st bad">✕</span><div class="t"><b>Malicious Claude Code extension on this Mac</b><div class="muted">${extHit.installed?.length ? `Version ${esc([...new Set(extHit.installed.map((x) => x.version))].join(' and '))} is installed. ` : 'The extension is gone, but a trace it leaves behind is still here. '}Uninstall it, then replace the keys on this Mac.</div></div><span class="actions"><button data-act="open-url" data-url="${esc(extHit.notice || 'https://cursor.com/blog/claude-code-extension-security-notice')}">What to remove</button><button class="primary" data-keys="all">Replace keys</button></span></div>` : '';
   const todo = [
+    extTodo,
+    ...dead.map(({ p, k }) => `<div class="todo"><span class="st bad">✕</span><div class="t"><b>Replace the dead ${esc(p.name)} key</b><div class="muted">${esc(k.names.join(', '))} in ${esc(k.projects.join(', ') || 'your Keychain')}</div></div><button class="primary" data-act="replace" data-provider="${esc(p.id)}" data-fp="${esc(k.fp)}">Replace</button></div>`),
+    ...shared.map(({ p, k }) => `<div class="todo"><span class="st warn">!</span><div class="t"><b>Replace the shared ${esc(p.name)} key</b><div class="muted">One key is used by ${esc(k.projects.join(', '))}. If it leaks, all of them break.</div></div><span class="actions"><button data-act="shared-ok" data-fp="${esc(k.fp)}" title="Keep sharing this key and stop warning about it">Ignore</button><button class="primary" data-act="replace" data-provider="${esc(p.id)}" data-fp="${esc(k.fp)}">Replace</button></span></div>`),
     ...(data.leaks || []).map((l) => `<div class="todo"><span class="st bad">✕</span><div class="t"><b>${l.public ? 'Leaked: ' : ''}Your ${esc(l.providerName)} key is ${esc(leakWhere(l))}</b><div class="muted">${l.public ? 'Anyone can read it. Replace it now, then delete the old one.' : 'Anyone who gets a copy of this repository has the key. Replace it, then delete the old one.'}</div></div><span class="actions"><button data-act="leak-ok" data-fp="${esc(l.fp)}" title="I know, it's fine">Ignore</button>${l.inCatalog && !l.own ? `<button class="primary" data-act="replace" data-provider="${esc(l.providerId)}" data-fp="${esc(l.fp)}">Replace</button>` : ''}</span></div>`),
-    ...(data.alerts || []).filter((a) => !a.done && !a.closed && a.affected.length).map((a) => `<div class="todo"><span class="st bad">!</span><div class="t"><b>${esc(a.title)}: replace ${plural(a.affected.length, 'key')}</b><div class="muted">${esc(a.projects.join(', '))} ${a.projects.length === 1 ? 'is' : 'are'} deployed on ${esc(a.platformName)}.</div></div><span class="actions"><button data-act="alert-done" data-id="${esc(a.id)}" title="I already replaced these keys">I've handled this</button><button class="primary" data-view-go="alerts">See which</button></span></div>`),
-    ...dead.map(({ p, k }) => `<div class="todo"><span class="st bad">✕</span><div class="t"><b>Replace the dead ${esc(p.name)} key</b><div class="muted">${esc(k.names.join(', '))} in ${esc(k.projects.join(', '))}</div></div><button class="primary" data-act="replace" data-provider="${esc(p.id)}" data-fp="${esc(k.fp)}">Replace</button></div>`),
-    ...shared.map(({ p, k }) => `<div class="todo"><span class="st warn">!</span><div class="t"><b>Give each project its own ${esc(p.name)} key</b><div class="muted">One key is shared by ${esc(k.projects.join(', '))}. If it leaks, all of them break.</div></div><span class="actions"><button data-act="shared-ok" data-fp="${esc(k.fp)}" title="Keep sharing this key and stop warning about it">Ignore</button><button data-act="add" data-provider="${esc(p.id)}" title="Create a separate key, so each project has its own">New key</button></span></div>`),
-  ];
+    ...(data.alerts || []).filter((a) => !a.done && !a.closed && a.affected.length).map((a) => `<div class="todo"><span class="st bad">!</span><div class="t"><b>Replace ${plural(a.affected.length, 'key')} from before ${esc(fmtDate(a.date))}</b><div class="muted">${esc(a.projects.join(', '))} ${a.projects.length === 1 ? 'is' : 'are'} on ${esc(a.platformName)}. ${esc(a.title)}</div></div><span class="actions"><button data-act="alert-done" data-id="${esc(a.id)}" title="I already replaced these keys">I've handled this</button><button class="primary" data-view-go="alerts">See which</button></span></div>`),
+  ].filter(Boolean);
   main.innerHTML = banner + `<div class="bar"><h1>Overview${help('A summary of every key on this Mac. A dead key means the provider rejected it, so anything using it is broken. A shared key is used by more than one project: if it leaks, all of them are exposed.')}</h1></div>
     <div class="stats">
       <button class="stat" data-view-go="projects"><div class="n">${data.projects.length}</div><div class="l">projects on this Mac</div></button>
@@ -363,7 +433,7 @@ function renderOverview(main, banner) {
     </div>
     <div class="section"><h2>What to do now</h2><div class="list">${todo.join('') || `<div class="todo"><span class="st ok">✓</span><div class="t"><b>Nothing urgent.</b><div class="muted">${working.length} keys checked and working${unchecked.length ? `, ${unchecked.length} can't be checked automatically yet` : ''}.</div></div></div>`}</div></div>
     ${overviewMore(keys, dead, working)}
-    ${data.plan === 'pro' ? '' : `    <div class="section"><h2>Keep watching while you sleep</h2><div class="panel"><p>With Pro, Burnkeys emails you the moment a key stops working, or when a service you use gets breached.</p><button data-view-go="alerts">See Alerts</button></div></div>`}`;
+    ${data.plan === 'pro' ? '' : `    <div class="section"><h2>More than 3 projects</h2><div class="panel"><p>Free watches 3 projects while Burnkeys is open. Pro watches every project on this Mac, and keeps checking after you close it.</p><button class="primary" data-view-go="account">Get Pro</button></div></div>`}`;
 }
 
 // Text for each activity entry. Each line is built only for its own type.
@@ -419,7 +489,7 @@ function renderAlerts(main) {
     <div class="section"><h2>Recent breaches</h2></div>${alerts.filter((a) => !a.closed && a.projects.length).map(card).join('') || '<div class="panel"><p>None of the recent breaches touch your projects. ✓</p></div>'}
     ${alerts.some((a) => !a.closed && !a.projects.length) ? `<details class="section"><summary class="muted" style="cursor:pointer">Breaches at services you don't seem to use (${alerts.filter((a) => !a.closed && !a.projects.length).length})</summary><p class="muted">If one of your projects does run there, open it and tick the project.</p>${alerts.filter((a) => !a.closed && !a.projects.length).map(card).join('')}</details>` : ''}
     ${alerts.some((a) => a.closed) ? `<details class="section"><summary class="muted" style="cursor:pointer">Closed alerts (${alerts.filter((a) => a.closed).length})</summary>${alerts.filter((a) => a.closed).map((a) => `<div class="item"><div><b>${esc(a.title)}</b> <span class="muted">${esc(fmtDate(a.date))}</span></div><span></span><span class="actions"><button data-act="alert-close" data-id="${esc(a.id)}" data-undo="1">Show again</button></span></div>`).join('')}</details>` : ''}
-    ${data.plan === 'pro' ? '<div class="section"><h2>Email alerts</h2><div class="panel"><p>On. Burnkeys emails you when a key stops working, leaks, or is stored at a service that gets breached.</p></div></div>' : `    <div class="section"><h2>Email alerts</h2><div class="panel"><p>With Pro, Burnkeys emails you when a service you use is breached or a key stops working, so you hear it first. $8 a month or $72 a year.</p><button data-view-go="account">Get Pro</button></div></div>`}`;
+    ${data.plan === 'pro' ? '<div class="section"><h2>Email alerts</h2><div class="panel"><p>On. Burnkeys emails you when a key on this Mac stops working or shows up in git. Breach news stays in the app either way.</p></div></div>' : `    <div class="section"><h2>Email alerts</h2><div class="panel"><p>Breach news is free, in this list. Pro emails you when a key on this Mac dies or is found in git, and checks while the app is closed. $8 a month or $72 a year.</p><button data-view-go="account">Get Pro</button></div></div>`}`;
 }
 
 function renderSettings(main) {
@@ -430,7 +500,7 @@ function renderSettings(main) {
     <div class="section"><h2>Checks</h2><div class="panel"><p>Burnkeys asks each provider directly whether your key still works. While Burnkeys is open it re-checks on this schedule, and whenever you press Check keys.</p>
       <select id="everySel">${[[5, 'Every 5 minutes (Pro)'], [15, 'Every 15 minutes (Pro)'], [60, 'Every hour (Pro)'], [360, 'Every 6 hours'], [1440, 'Once a day']].map(([v, l]) => `<option value="${v}" ${v === (data.checkEveryMin || 360) ? 'selected' : ''}>${l}</option>`).join('')}</select>
       ${settingsErr ? `<p class="bad" style="margin-top:8px">${esc(settingsErr)} <button class="link" data-view-go="account" style="text-decoration:underline">Get Pro</button></p>` : ''}
-      <label class="row" style="justify-content:flex-start;gap:10px;margin-top:14px;cursor:pointer"><input type="checkbox" id="bgToggle" ${data.background ? 'checked' : ''}><span><b style="color:var(--text)">Keep checking when Burnkeys is closed</b> <span class="pro" style="margin-left:4px">Pro</span><br><span class="muted">Burnkeys opens hidden on this schedule, checks your keys, git and breaches, and tells you about anything new with a Mac notification and an email. Your keys never leave this Mac: the email only names the provider and project.</span></span></label></div></div>
+      <label class="row" style="justify-content:flex-start;gap:10px;margin-top:14px;cursor:pointer"><input type="checkbox" id="bgToggle" ${data.background ? 'checked' : ''}><span><b style="color:var(--text)">Keep checking when Burnkeys is closed</b> <span class="pro" style="margin-left:4px">Pro</span><br><span class="muted">Burnkeys opens hidden on this schedule, checks your keys, git and breaches, and tells you about anything new with a Mac notification and an email. The email only names the provider and project. Key values are not sent to Burnkeys.</span></span></label></div></div>
     <div class="section"><h2>Claude Code</h2><div class="panel"><p>The Burnkeys plugin blocks API keys pasted into Claude, warns you about dead keys when a session starts, and lets you ask Claude to check or rotate keys.</p>
       <button ${pluginInstalled ? 'disabled' : 'class="primary"'} data-act="install-plugin">${pluginInstalled ? '✓ Installed in Claude Code' : 'Install in Claude Code'}</button>
       <p class="muted" style="margin-top:8px">Takes effect in your next Claude Code session.</p></div></div>
@@ -441,7 +511,6 @@ function renderSettings(main) {
   if (pluginInstalled === null) api('plugin').then((r) => { pluginInstalled = r.installed; if (view === 'settings') render(); }).catch(() => {});
 }
 
-let accountInfo = null;
 function renderAccount(main) {
   if (!accountInfo) { main.innerHTML = '<div class="empty"><p>Loading…</p></div>'; api('account').then((a) => { accountInfo = a; render(); }).catch(() => { accountInfo = { signedIn: false }; render(); }); return; }
   const a = accountInfo;
@@ -456,7 +525,11 @@ function renderAccount(main) {
       <button class="primary" data-act="signin">Sign in</button>${a.waiting ? '<p class="muted" style="margin-top:10px"><span class="spin"></span>Finish signing in in your browser. You\'ll come right back here.</p>' : ''}`}
       <p class="muted" style="margin-top:14px">Your account only holds your email and your plan. Never your keys: they stay on this Mac.</p></div>`;
 }
-window.burnkeysSignedIn = () => { accountInfo = null; view = 'account'; render(); };
+window.burnkeysSignedIn = async () => {
+  accountInfo = await api('account').catch(() => ({ signedIn: false }));
+  if (accountInfo.signedIn) { view = 'overview'; await enterApp(); }
+  else render();
+};
 window.burnkeysGo = (v) => { view = v; detail = null; render(); };
 
 // ---------- Pro assistant ----------
@@ -726,6 +799,7 @@ addEventListener('dragover', (e) => e.preventDefault());
 addEventListener('drop', (e) => e.preventDefault());
 
 async function refresh() {
+  if (!accountInfo?.signedIn) { render(); return; }
   data = await api('overview');
   if (modal?.kind === 'job' && data.job && data.job.id === modal.job?.id && !['saving', 'done'].includes(modal.job.step)) modal.job = data.job;
   render();
@@ -797,6 +871,7 @@ document.addEventListener('click', async (e) => {
   if (t.id === 'themeBtn') { theme = themes[(themes.indexOf(theme) + 1) % 3]; applyTheme(); try { localStorage.setItem('bk-theme', theme); } catch {} return; }
   if (t.id === 'refreshBtn') { t.disabled = true; t.classList.add('spinning'); busy = true; try { data = await api('scan', {}); data = await api('check', { force: true }); activityItems = null; } finally { busy = false; t.disabled = false; t.classList.remove('spinning'); } render(); return; }
   if (t.id === 'checkBtn') { t.disabled = true; t.textContent = 'Checking…'; try { data = await api('check', { force: true }); render(); } finally { t.disabled = false; t.textContent = 'Check keys'; } return; }
+  if (t.id === 'updateBtn') { const u = t.dataset.url || data?.update?.url; if (u) window.open(u, '_blank', 'noopener'); return; }
   const act = t.dataset.act;
   if (act === 'scan') { busy = true; render(); try { data = await api('scan', {}); } finally { busy = false; } render(); }
   if (act === 'back') { detail = null; render(); }
@@ -848,10 +923,10 @@ document.addEventListener('click', async (e) => {
     const el = document.getElementById('manualKey');
     try { await api('add-key/manual', { key: el.value }); el.value = ''; modal.err = null; if (modal.job?.fields) await refresh(); } catch (err) { modal.err = err.message; el.value = ''; renderModal(); }
   }
-  if (act === 'signin') { await api('account/start', {}); accountInfo = { ...accountInfo, waiting: true }; render();
-    const poll = setInterval(async () => { const a = await api('account').catch(() => null); if (a?.signedIn) { clearInterval(poll); accountInfo = a; render(); } }, 2000);
+  if (act === 'signin') { await api('account/start', {}); accountInfo = { signedIn: false, waiting: true }; render();
+    const poll = setInterval(async () => { const a = await api('account').catch(() => null); if (a?.signedIn) { clearInterval(poll); accountInfo = a; await enterApp(); } }, 2000);
     setTimeout(() => clearInterval(poll), 10 * 60_000); }
-  if (act === 'signout') { await api('account/signout', {}); accountInfo = { signedIn: false }; render(); }
+  if (act === 'signout') { await api('account/signout', {}); accountInfo = { signedIn: false }; data = null; view = 'overview'; render(); }
   if (act === 'install-plugin') { try { pluginInstalled = (await api('plugin', {})).installed; settingsErr = null; } catch (err) { settingsErr = err.message; } render(); }
   if (act === 'new-project') { modal = { kind: 'newproject' }; renderModal(); }
   if (act === 'np-create') {
@@ -975,8 +1050,16 @@ document.addEventListener('input', (e) => {
 document.addEventListener('keydown', (e) => { if (e.target.id === 'askBox' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.querySelector('[data-act=ask]')?.click(); } });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal && (modal.kind === 'catalog' || ['failed', 'cancelled', 'done'].includes(modal.job?.step))) { modal = null; renderModal(); } });
 
-setInterval(() => { if (!modal && document.activeElement?.id !== 'askBox') refresh().catch(() => {}); else api('ping', {}).catch(() => {}); }, 60_000);
-refresh().then(async () => { if (data.scanned) { data = await api('check', {}); render(); } }).catch((e) => {
+setInterval(() => {
+  if (!accountInfo?.signedIn) { api('ping', {}).catch(() => {}); return; }
+  if (!modal && document.activeElement?.id !== 'askBox') refresh().catch(() => {});
+  else api('ping', {}).catch(() => {});
+}, 60_000);
+api('account').then(async (a) => {
+  accountInfo = a;
+  if (!a.signedIn) { render(); return; }
+  await enterApp();
+}).catch((e) => {
   document.getElementById('main').innerHTML = `<div class="empty"><p>Couldn't connect to Burnkeys (${esc(e.message)}). Quit and open it again.</p></div>`;
 });
 </script>

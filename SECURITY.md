@@ -3,8 +3,8 @@
 Burnkeys handles the most sensitive strings you own, so its design rules are strict:
 
 - **Keys stay on your Mac.** Scanning, checking and replacing run on your computer. A key is sent
-  only to the provider it belongs to (to check it), and to Vercel when you ask Burnkeys to update a
-  project there. Nothing else ever receives a key value.
+  only to the provider it belongs to (to check it), and, when you ask, to the host you are updating
+  (Vercel, Railway, Netlify, Fly.io or Render). Nothing else ever receives a key value.
 - **Never prints a secret.** Keys are shown only as a one-way fingerprint (`fp:` + first 8 hex
   chars of SHA-256), plus the last 4 characters when you need to find a key on a provider's site.
   All output goes through a scrubber that removes any secret seen during the run.
@@ -20,11 +20,13 @@ Burnkeys handles the most sensitive strings you own, so its design rules are str
 
 Only if you use these features, and never a key:
 
-- **Account (optional, for Pro):** your email and plan.
+- **Account:** the Mac app requires a free account before it shows projects or keys. The account
+  holds your email and plan, never a key. The terminal version does not ask you to sign in.
 - **Breach list:** the app downloads the public list from burnkeys.com/advisories.json and matches
   it on your Mac.
-- **Pro email alerts and the assistant:** provider names, variable names, project names and
-  fingerprints. A message that looks like a key is refused on your Mac before anything is sent.
+- **Pro email alerts and the assistant:** only if burnkeys.com has this account as Pro. The request
+  carries provider names, variable names, project names and fingerprints. A message that looks like
+  a key is refused on the Mac before anything is sent. The open core does not include these features.
 
 Details: https://burnkeys.com/privacy/
 

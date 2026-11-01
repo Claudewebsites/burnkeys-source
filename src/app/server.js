@@ -10,20 +10,29 @@ import { takeKeyFromClipboard } from '../clipboard.js';
 import { defaultRoots, discoverProjects, deniedRoots } from '../projects.js';
 import { setProjectVar, removeValueFromProject } from '../envwrite.js';
 import { appendFile } from 'node:fs/promises';
-import { detectSecretsInText } from '../detect.js';
 import { hookInstalled, installHook, uninstallHook } from '../hook.js';
 import { createVault, defaultKeychain, inApp, moveToAppKeychain } from '../vault.js';
 import { CATALOG, catalogEntry, looksLikeKeyFor, normalizePart, checkParts } from '../catalog.js';
 import { HOSTS } from '../hosts.js';
 import { findVercelProject, updateVercelEnv, redeployProduction } from '../vercel.js';
 import { scanGitLeaks, deployedOn, PLATFORMS } from '../leaks.js';
-import { execFile } from 'node:child_process';
-import { unlink } from 'node:fs/promises';
+import { scanExtensions } from '../extscan.js';
 import { fileURLToPath } from 'node:url';
 
 const FREE_PROJECTS = 3;
 const FREE_PROVIDERS = 10;
-const AGENT_LABEL = 'com.burnkeys.agent';
+
+// Pro (unlimited projects, checks while the app is closed, email, the assistant)
+// lives in pro/ and is omitted from the public source. Without that file the
+// free limits always apply. Email and the assistant are refused again by burnkeys.com.
+async function loadClosedPro() {
+  try {
+    return await import('../../pro/index.js');
+  } catch (e) {
+    if (e?.code === 'ERR_MODULE_NOT_FOUND') return null;
+    throw e;
+  }
+}
 
 // Burnkeys app: a small web UI served on 127.0.0.1 only.
 // - Every API call needs the random session token (no other site or app can call it).
@@ -37,7 +46,10 @@ export async function startApp({
   port = 0, dataDir = join(homedir(), '.burnkeys'), fetchImpl = fetch, clipboard, openUrl,
   clipboardWait = {}, vault = createVault({ dataDir }), roots, backupRoot,
   siteUrl = 'https://burnkeys.com', keychain = defaultKeychain,
+  // null: the open core only (no Pro). undefined: load pro/ when this checkout has it.
+  pro: proOption,
 } = {}) {
+  const closed = proOption === null ? null : (proOption ?? await loadClosedPro());
   const account = {
     token: () => keychain.get('account:token'),
     save: (t) => keychain.set('account:token', t),
@@ -202,8 +214,11 @@ export async function startApp({
       if (!prov.keys.has(fp)) prov.keys.set(fp, { fp, names: new Set(), projects: new Set(), status: c?.status ?? null, checkedAt: c?.at ?? null, sharedOk: sharedOk.has(fp), firstSeen: seen[fp] });
       return prov.keys.get(fp);
     };
-    // Free plan: keys are read from 3 projects (the user picks which). Pro: all of them.
-    const pro = (await plan()) === 'pro';
+    // Free plan: keys are read from 3 projects (the user picks which).
+    // The closed pro/ module lifts that only after burnkeys.com says the account is Pro.
+    const pro = proApi ? (await proApi.entitlement()) === 'pro' : false;
+    // entitlement() may have just turned background checks off after the server said free.
+    if (proApi) Object.assign(cfg, await loadConfig());
     const all = cfg.projects ?? [];
     let watched = null;
     const locked = [];
@@ -328,7 +343,7 @@ export async function startApp({
     const custom = cfg.custom ?? [];
     return {
       scanned: Array.isArray(cfg.projects), scannedAt: cfg.scannedAt ?? null, roots: cfg.roots ?? [], denied: cfg.denied ?? [], checkEveryMin: cfg.checkEveryMin ?? 360,
-      projects, providers, leaks, alerts, platforms, allPlatforms: PLATFORMS.map(({ id, name }) => ({ id, name })), leaksAt: leakData.at ?? null,
+      projects, providers, leaks, alerts, extensions: await scanExtensions(homedir()).catch(() => ({ installed: [], traces: [], notice: '' })), platforms, allPlatforms: PLATFORMS.map(({ id, name }) => ({ id, name })), leaksAt: leakData.at ?? null,
       version: myVersion, update: await latestVersion().then((v) => (v?.app && newer(v.app, myVersion) ? { version: v.app, url: /^https:\/\/burnkeys\.com\//.test(v.url ?? '') ? v.url : `${siteUrl}/download/Burnkeys.dmg`, notes: v.notes ?? '' } : null)).catch(() => null),
       plan: pro ? 'pro' : 'free', plans: await plansDoc(), limits, lockedProviders, background: !!cfg.background,
       catalog: [...CATALOG, ...custom].filter((c) => !used.has(c.id)).map((c) => ({ id: c.id, name: c.name, icon: c.icon ?? null })),
@@ -375,29 +390,19 @@ export async function startApp({
     fields: j.fields ? j.fields.map((f, i) => ({ label: f.label, variable: f.variable, optional: !!f.optional, file: f.file ?? null, done: !!j.parts?.[i], skipped: j.parts?.[i] === '' })) : null,
     fieldIndex: j.fieldIndex ?? 0 });
 
-  // The account's plan, asked from burnkeys.com at most every 10 minutes.
-  // Offline, the last known plan is kept so a paying user is never locked out.
-  async function plan({ fresh = false } = {}) {
-    if (!fresh && state.plan && Date.now() - state.plan.at < 10 * 60_000) return state.plan.value;
-    const t = await account.token().catch(() => null);
-    let value = 'free';
-    if (t) {
-      try {
-        const r = await fetchImpl(`${siteUrl}/api/me`, { headers: { Authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(8000) });
-        if (r.ok) value = (await r.json()).plan === 'pro' ? 'pro' : 'free';
-        else if (r.status !== 401) value = (await loadConfig()).lastPlan ?? 'free';
-      } catch { value = (await loadConfig()).lastPlan ?? 'free'; }
-    }
-    state.plan = { value, at: Date.now() };
-    const cfg = await loadConfig();
-    if (cfg.lastPlan !== value) await patchConfig({ lastPlan: value });
-    return value;
-  }
+  // proApi is created here, after the functions it calls. Requests start only once we listen.
+  const bridge = {
+    account, fetchImpl, siteUrl, loadConfig, patchConfig, state, dataDir, leaksPath,
+    readJson, writeJson, log, checkAll, overview, leakScan, teamSync,
+  };
+  const proApi = closed?.createPro?.(bridge) ?? null;
 
-  // Background re-checks while the app runs, at the chosen interval (Pro can go down to 5 minutes).
+  // Re-checks while the app is open. Faster than every 6 hours is Pro, and only the closed module can allow it.
   let lastAuto = Date.now();
   const autoTimer = setInterval(async () => {
-    const every = ((await loadConfig()).checkEveryMin ?? 360) * 60_000;
+    const entitled = proApi ? (await proApi.entitlement()) === 'pro' : false;
+    const configured = (await loadConfig()).checkEveryMin ?? 360;
+    const every = (entitled ? Math.max(5, configured) : Math.max(360, configured)) * 60_000;
     if (Date.now() - lastAuto < every) return;
     lastAuto = Date.now();
     await checkAll({ force: true }).catch(() => {});
@@ -405,87 +410,9 @@ export async function startApp({
   }, 60_000);
   autoTimer.unref?.();
 
-  // ---- Background checks (Pro): a LaunchAgent opens Burnkeys hidden on a schedule. ----
-  // It runs the app itself (not a bare script), so it keeps the folder access the user
-  // already granted. Keys never leave the Mac: only "which key, which project" is sent
-  // to burnkeys.com, which emails the user.
-  const agentPlist = join(homedir(), 'Library', 'LaunchAgents', `${AGENT_LABEL}.plist`);
-  const appExecutable = () => {
-    // .../Burnkeys.app/Contents/Resources/engine/src/app/server.js -> .../Contents/MacOS/Burnkeys
-    const m = fileURLToPath(import.meta.url).match(/^(.*\.app)\/Contents\/Resources\/engine\//);
-    return m ? join(m[1], 'Contents', 'MacOS', 'Burnkeys') : null;
-  };
-  const launchctl = (args) => new Promise((ok) => execFile('/bin/launchctl', args, () => ok()));
-  async function setBackground(on, everyMin) {
-    const uid = process.getuid?.() ?? 501;
-    await launchctl(['bootout', `gui/${uid}/${AGENT_LABEL}`]);
-    if (!on) { await unlink(agentPlist).catch(() => {}); return { ok: true }; }
-    const exe = appExecutable();
-    if (!exe) return { ok: false, error: 'Background checks need the Burnkeys app (not the terminal version).' };
-    const esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>${AGENT_LABEL}</string>
-  <key>ProgramArguments</key><array><string>${esc(exe)}</string><string>--background</string></array>
-  <key>StartInterval</key><integer>${Math.max(300, everyMin * 60)}</integer>
-  <key>RunAtLoad</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>LowPriorityIO</key><true/>
-</dict></plist>
-`;
-    await mkdir(join(homedir(), 'Library', 'LaunchAgents'), { recursive: true });
-    await writeFile(agentPlist, plist);
-    await launchctl(['bootstrap', `gui/${uid}`, agentPlist]);
-    return { ok: true };
-  }
-
-  const notifiedPath = join(dataDir, 'notified.json');
-  const notifyMac = (title, text) => new Promise((ok) => {
-    const q = (s) => JSON.stringify(String(s).slice(0, 200));
-    execFile('/usr/bin/osascript', ['-e', `display notification ${q(text)} with title ${q(title)}`], () => ok());
-  });
-
-  // One background round: check every key, look for leaks once a day, match breaches,
-  // then tell the user about anything new (Mac notification + email with Pro).
   async function runBackground() {
-    await checkAll({ force: true }).catch(() => {});
-    if (Date.now() - ((await readJson(leaksPath, {})).at ?? 0) > 24 * 3600_000) await leakScan().catch(() => {});
-    const o = await overview();
-    await teamSync(o, true).catch(() => {});
-    const events = [];
-    for (const p of o.providers) for (const k of p.keys) {
-      if (k.status === 'invalid') events.push({ id: `dead:${k.fp}`, type: 'dead', provider: p.name, names: k.names, projects: k.projects, fp: k.fp });
-    }
-    for (const l of o.leaks) events.push({ id: `leak:${l.fp}`, type: 'leak', provider: l.providerName, names: l.names, projects: [l.project], fp: l.fp, public: !!l.public });
-    for (const a of o.alerts) if (!a.done && !a.closed && a.affected.length) {
-      events.push({ id: `alert:${a.id}`, type: 'breach', advisoryId: a.id, title: a.title, url: a.url, provider: a.platformName, projects: a.projects, count: a.affected.length });
-    }
-    const sent = new Set(await readJson(notifiedPath, []));
-    // `mac:` marks a Mac notification already shown; a plain id marks the email as done.
-    const fresh = events.filter((e) => !sent.has(e.id));
-    if (!fresh.length) return { sent: 0 };
-    for (const e of fresh.filter((x) => !sent.has(`mac:${x.id}`)).slice(0, 3)) {
-      if (e.type === 'dead') await notifyMac('A key stopped working', `${e.provider} key in ${e.projects.join(', ') || 'your Keychain'}. Open Burnkeys to replace it.`);
-      if (e.type === 'leak') await notifyMac(e.public ? 'Key leaked publicly' : 'Key found in git', `${e.provider} key in ${e.projects[0]}. Open Burnkeys to replace it.`);
-      if (e.type === 'breach') await notifyMac(e.title, `${e.count} of your keys were stored there. Open Burnkeys to see which.`);
-    }
-    let held = new Set(), mailFailed = false;
-    if (o.plan === 'pro') {
-      const t = await account.token().catch(() => null);
-      if (t) {
-        try {
-          const r = await fetchImpl(`${siteUrl}/api/notify`, { method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ events: fresh.map(({ id, ...e }) => e) }), signal: AbortSignal.timeout(10_000) });
-          if (r.ok) held = new Set(((await r.json().catch(() => ({}))).held ?? []).map(String));
-          else mailFailed = true;
-        } catch { mailFailed = true; /* the Mac notification still went out; email next round */ }
-      }
-    }
-    const done = fresh.flatMap((e) => (mailFailed || held.has(e.advisoryId) || held.has(e.title) ? [`mac:${e.id}`] : [`mac:${e.id}`, e.id]));
-    await writeJson(notifiedPath, [...sent, ...done].slice(-1000));
-    await log('notified', { count: fresh.length });
-    return { sent: fresh.length };
+    if (!proApi) return { sent: 0 };
+    return proApi.runBackground();
   }
 
   async function entryFor(id) {
@@ -818,7 +745,9 @@ export async function startApp({
         // Revoke the token on burnkeys.com too, so a copied token stops working.
         const t = await account.token().catch(() => null);
         if (t) await fetchImpl(`${siteUrl}/api/app-signout`, { method: 'POST', headers: { Authorization: `Bearer ${t}` }, signal: AbortSignal.timeout(8000) }).catch(() => {});
-        await account.clear(); state.plan = null; return send(res, 200, { ok: true });
+        await account.clear(); state.plan = null;
+        if (proApi) await proApi.stopBackground().catch(() => {});
+        return send(res, 200, { ok: true });
       }
       if (route === 'GET /api/plugin' || route === 'POST /api/plugin') {
         // Install the Claude Code plugin that ships inside this app, by adding it to ~/.claude/settings.json.
@@ -1030,27 +959,12 @@ export async function startApp({
         return send(res, 200, await overview());
       }
       if (route === 'POST /api/assistant') {
-        // Pro assistant: sends the question and a metadata-only snapshot (never a key) to burnkeys.com.
+        // The assistant is Pro. The open core has no client for it; pro/ sends metadata only,
+        // and burnkeys.com checks the account again before answering.
+        if (!proApi) return send(res, 402, { error: 'The assistant comes with Pro.' });
         const { question, history } = await readBody(req);
-        // Checked here, on the Mac: a pasted key never leaves this computer.
-        const asked = [question, ...(Array.isArray(history) ? history.map((m) => m?.content) : [])].filter((x) => typeof x === 'string').join('\n');
-        if (detectSecretsInText(asked).length) return send(res, 400, { error: 'That looks like a key, so it was not sent. Burnkeys never needs a key in the chat: ask about it by provider or fingerprint.' });
-        const t = await account.token().catch(() => null);
-        if (!t) return send(res, 401, { error: 'Sign in to use the assistant.' });
-        const o = await overview();
-        const snapshot = {
-          projects: o.projects.filter((p) => !p.locked).map((p) => ({ name: p.name, keys: p.keyCount, health: p.health })),
-          keys: o.providers.flatMap((p) => p.keys.map((k) => ({ provider: p.name, fingerprint: k.fp, variables: k.names, projects: k.projects,
-            status: k.status === 'valid' ? 'works' : k.status === 'invalid' ? 'dead' : p.kind === 'signing' ? 'signing secret' : p.canCheck ? 'not checked' : 'cannot be checked', savedInKeychain: k.saved, sharedOnPurpose: k.sharedOk }))),
-          leaks: o.leaks.map((l) => ({ provider: l.providerName, fingerprint: l.fp, project: l.project, committed: l.tracked, inHistory: l.history, publicRepo: l.public })),
-          breaches: o.alerts.map((a) => ({ title: a.title, date: a.date, projects: a.projects, keysToReplace: a.affected.length, handled: a.done })),
-        };
-        try {
-          const r = await fetchImpl(`${siteUrl}/api/assistant`, { method: 'POST', headers: { Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: String(question ?? '').slice(0, 2000), history: Array.isArray(history) ? history.slice(-8) : [], snapshot }), signal: AbortSignal.timeout(60_000) });
-          const j = await r.json().catch(() => ({}));
-          return send(res, r.ok ? 200 : r.status, r.ok ? { answer: j.answer, left: j.left } : { error: j.error || 'The assistant is not available right now.' });
-        } catch { return send(res, 502, { error: 'Couldn\'t reach burnkeys.com. Check your connection.' }); }
+        const r = await proApi.assistant({ question, history, overview });
+        return send(res, r.status, r.body);
       }
       if (route === 'POST /api/forget') {
         // Delete a key saved in the Keychain (not used by any project).
@@ -1063,18 +977,19 @@ export async function startApp({
       if (route === 'POST /api/settings') {
         const body = await readBody(req);
         const cfg = await loadConfig();
-        const pro = (await plan({ fresh: true })) === 'pro';
         let { checkEveryMin = cfg.checkEveryMin ?? 360, background = !!cfg.background } = body;
         const allowed = [5, 15, 60, 360, 1440];
         if (!allowed.includes(checkEveryMin)) return send(res, 400, { error: 'Unsupported interval.' });
-        if (checkEveryMin < 360 && !pro) return send(res, 402, { error: 'Checks more often than every 6 hours come with Pro.' });
-        if (background && !pro) return send(res, 402, { error: 'Checking while Burnkeys is closed comes with Pro.' });
-        if (background !== !!cfg.background || (background && checkEveryMin !== cfg.checkEveryMin)) {
-          const r = await setBackground(background, checkEveryMin);
-          if (!r.ok) return send(res, 400, { error: r.error });
-          await log(background ? 'background-on' : 'background-off', {});
+        // Without pro/, faster checks and background checks stay off. A local flag cannot turn them on.
+        if (!proApi) {
+          if (checkEveryMin < 360) return send(res, 402, { error: 'Checks more often than every 6 hours come with Pro.' });
+          if (background) return send(res, 402, { error: 'Checking while Burnkeys is closed comes with Pro.' });
+          await patchConfig({ checkEveryMin, background: false });
+          return send(res, 200, await overview());
         }
-        await patchConfig({ checkEveryMin, background });
+        const r = await proApi.configure({ checkEveryMin, background, cfg });
+        if (!r.ok) return send(res, r.status, { error: r.error });
+        await patchConfig({ checkEveryMin: r.checkEveryMin, background: r.background });
         return send(res, 200, await overview());
       }
       if (route === 'POST /api/cancel') {

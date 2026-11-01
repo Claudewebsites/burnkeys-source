@@ -9,12 +9,14 @@ import WebKit
 
 // Keys live in the app's own Keychain items (service "burnkeys.app"). The engine asks for them over a
 // private pipe that only this process has: requests come in on its stderr, answers go to its stdin.
-// Items made by the app trust only the app, so any other program gets a macOS permission prompt.
+// New items use the data-protection keychain so Burnkeys can read them without a login-keychain prompt.
 final class KeychainBridge {
     private let service = "burnkeys.app"
     private let toEngine = Pipe()
     private let fromEngine = Pipe()
     private var buffer = Data()
+    private let queue = DispatchQueue(label: "com.burnkeys.keychain")
+    private var migrated = false
 
     func attach(_ p: Process) {
         var env = p.environment ?? [:]
@@ -27,6 +29,7 @@ final class KeychainBridge {
             if data.isEmpty { h.readabilityHandler = nil; return } // engine exited
             self?.receive(data)
         }
+        queue.async { self.migrateFromLoginKeychain() }
     }
 
     private func receive(_ data: Data) {
@@ -42,11 +45,13 @@ final class KeychainBridge {
                   let req = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
                   let id = req["id"] as? Int, let op = req["op"] as? String, let account = req["account"] as? String else { continue }
             var reply: [String: Any] = ["id": id, "ok": false]
-            switch op {
-            case "set": if let v = req["value"] as? String { reply["ok"] = set(account, v) }
-            case "get": if let v = get(account) { reply["ok"] = true; reply["value"] = v }
-            case "delete": reply["ok"] = delete(account)
-            default: break
+            queue.sync {
+                switch op {
+                case "set": if let v = req["value"] as? String { reply["ok"] = set(account, v) }
+                case "get": if let v = get(account) { reply["ok"] = true; reply["value"] = v }
+                case "delete": reply["ok"] = delete(account)
+                default: break
+                }
             }
             if let out = try? JSONSerialization.data(withJSONObject: reply) {
                 try? toEngine.fileHandleForWriting.write(contentsOf: out + Data([0x0A]))
@@ -54,31 +59,62 @@ final class KeychainBridge {
         }
     }
 
-    private func base(_ account: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+    private func base(_ account: String, dataProtection: Bool) -> [String: Any] {
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        if dataProtection { q[kSecUseDataProtectionKeychain as String] = true }
+        return q
     }
-    private func set(_ account: String, _ value: String) -> Bool {
-        // Update in place, so a failure never loses the key that was there.
-        let upd = SecItemUpdate(base(account) as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
-        if upd == errSecSuccess { return true }
-        if upd != errSecItemNotFound { return false }
-        var q = base(account)
-        q[kSecValueData as String] = Data(value.utf8)
-        q[kSecAttrLabel as String] = "Burnkeys key"
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
-        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
-    }
-    private func get(_ account: String) -> String? {
-        var q = base(account)
+    private func copy(_ account: String, dataProtection: Bool) -> String? {
+        var q = base(account, dataProtection: dataProtection)
         q[kSecReturnData as String] = true
         q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: AnyObject?
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
         return String(data: d, encoding: .utf8)
     }
+    private func set(_ account: String, _ value: String) -> Bool {
+        let data = Data(value.utf8)
+        let upd = SecItemUpdate(base(account, dataProtection: true) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if upd == errSecSuccess { return true }
+        if upd != errSecItemNotFound { return false }
+        var q = base(account, dataProtection: true)
+        q[kSecValueData as String] = data
+        q[kSecAttrLabel as String] = "Burnkeys key"
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
+    }
+    private func get(_ account: String) -> String? {
+        if let v = copy(account, dataProtection: true) { return v }
+        guard let v = copy(account, dataProtection: false) else { return nil }
+        if set(account, v) { _ = SecItemDelete(base(account, dataProtection: false) as CFDictionary) }
+        return v
+    }
     private func delete(_ account: String) -> Bool {
-        let st = SecItemDelete(base(account) as CFDictionary)
-        return st == errSecSuccess || st == errSecItemNotFound
+        let a = SecItemDelete(base(account, dataProtection: true) as CFDictionary)
+        let b = SecItemDelete(base(account, dataProtection: false) as CFDictionary)
+        return (a == errSecSuccess || a == errSecItemNotFound) && (b == errSecSuccess || b == errSecItemNotFound)
+    }
+    // Old builds wrote to the login keychain, which asks for the Mac password on every read.
+    // Copy those items into the data-protection keychain once, then delete the old copies.
+    private func migrateFromLoginKeychain() {
+        if migrated { return }
+        migrated = true
+        let q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true
+        ]
+        var out: AnyObject?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let items = out as? [[String: Any]] else { return }
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  let data = item[kSecValueData as String] as? Data,
+                  let value = String(data: data, encoding: .utf8) else { continue }
+            if copy(account, dataProtection: true) == nil { _ = set(account, value) }
+            _ = SecItemDelete(base(account, dataProtection: false) as CFDictionary)
+        }
     }
 }
 
